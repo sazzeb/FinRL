@@ -40,7 +40,14 @@ def test(
         "turbulence_array": turbulence_array,
         "if_train": False,
     }
+
+
+    env_kwargs = kwargs.get("env_kwargs")
+    if isinstance(env_kwargs, dict) and env_kwargs:
+        env_config["env_kwargs"] = env_kwargs
     env_instance = env(config=env_config)
+
+
 
     # load elegantrl needs state dim, action dim and net dim
     net_dimension = kwargs.get("net_dimension", 2**7)

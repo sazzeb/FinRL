@@ -233,32 +233,102 @@ class YahooFinanceProcessor:
         self.end = end_date
         self.time_interval = time_interval
 
-        # Download and save the data in a pandas DataFrame
-        start_date = pd.Timestamp(start_date)
-        end_date = pd.Timestamp(end_date)
-        delta = timedelta(days=1)
+        # Download and save the data in a pandas DataFrame.
+        # Keep ticker-by-ticker behavior, but fetch in calendar-month chunks instead of day-by-day.
+        # NOTE: yfinance uses an exclusive `end` bound; to include `end_date` (as the prior day-by-day
+        # loop did), we request up to `end_date + 1 day`.
+
+        start_ts = pd.Timestamp(start_date)
+        end_ts = pd.Timestamp(end_date)
+        inclusive_end_exclusive_bound = end_ts + timedelta(days=1)
+
+        # Provider limits for intraday intervals (avoid requests that are too large).
+        # If a month window exceeds the limit, we sub-chunk *within that month*.
+        max_window = None
+        if self.time_interval == "1m":
+            max_window = timedelta(days=7)
+        elif self.time_interval in {"2m", "5m", "15m", "30m", "60m", "90m", "1h"}:
+            max_window = timedelta(days=30)
+
+        def _month_start(ts: pd.Timestamp) -> pd.Timestamp:
+            return ts.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+        def _next_month(ts: pd.Timestamp) -> pd.Timestamp:
+            year = ts.year + (1 if ts.month == 12 else 0)
+            month = 1 if ts.month == 12 else ts.month + 1
+            return ts.replace(year=year, month=month, day=1, hour=0, minute=0, second=0, microsecond=0)
+
+        def _iter_month_windows(start_inclusive: pd.Timestamp, end_exclusive: pd.Timestamp):
+            current = _month_start(start_inclusive)
+            # ensure we start at the month containing start_inclusive
+            if current > start_inclusive:
+                current = _month_start(start_inclusive)
+            while current < end_exclusive:
+                month_end = _next_month(current)
+                win_start = max(start_inclusive, current)
+                win_end = min(end_exclusive, month_end)
+                if win_start < win_end:
+                    yield win_start, win_end
+                current = month_end
+
+        def _iter_subwindows(win_start: pd.Timestamp, win_end: pd.Timestamp):
+            if max_window is None:
+                yield win_start, win_end
+                return
+
+            cur = win_start
+            while cur < win_end:
+                nxt = min(cur + max_window, win_end)
+                yield cur, nxt
+                cur = nxt
+
         data_df = pd.DataFrame()
-        for tic in ticker_list:
-            current_tic_start_date = start_date
-            while (
-                current_tic_start_date <= end_date
-            ):  # downloading daily to workaround yfinance only allowing  max 7 calendar (not trading) days of 1 min data per single download
-                temp_df = yf.download(
-                    tic,
-                    start=current_tic_start_date,
-                    end=current_tic_start_date + delta,
-                    interval=self.time_interval,
-                    proxy=proxy,
-                )
-                if temp_df.columns.nlevels != 1:
-                    temp_df.columns = temp_df.columns.droplevel(1)
+        total_tickers = len(ticker_list)
+        warned_empty: set[str] = set()
+        warned_error: set[str] = set()
 
-                temp_df["tic"] = tic
-                data_df = pd.concat([data_df, temp_df])
-                current_tic_start_date += delta
+        for i, tic in enumerate(ticker_list):
+            print(
+                f"Processing {tic} ({i + 1}/{total_tickers})... {(i + 1) / max(total_tickers, 1) * 100:.2f}% complete."
+            )
+            for month_start, month_end in _iter_month_windows(start_ts, inclusive_end_exclusive_bound):
+                for sub_start, sub_end in _iter_subwindows(month_start, month_end):
+                    try:
+                        temp_df = yf.download(
+                            tic,
+                            start=sub_start,
+                            end=sub_end,
+                            interval=self.time_interval,
+                            proxy=proxy,
+                        )
+                    except Exception as e:
+                        if tic not in warned_error:
+                            print(
+                                f"Error fetching data for {tic} ({self.time_interval}) in window {sub_start.date()} to {sub_end.date()}: {e}"
+                            )
+                            warned_error.add(tic)
+                        continue
 
-        data_df = data_df.reset_index().drop(columns=["Adj Close"])
-        # convert the column names to match processor_alpaca.py as far as poss
+                    if temp_df is None or temp_df.empty:
+                        if tic not in warned_empty:
+                            print(
+                                f"No data returned for {tic} ({self.time_interval}) in window {sub_start.date()} to {sub_end.date()}"
+                            )
+                            warned_empty.add(tic)
+                        continue
+                    if temp_df.columns.nlevels != 1:
+                        temp_df.columns = temp_df.columns.droplevel(1)
+
+                    temp_df["tic"] = tic
+                    data_df = pd.concat([data_df, temp_df])
+
+        if data_df.empty:
+            return pd.DataFrame(
+                columns=["timestamp", "open", "high", "low", "close", "volume", "tic"]
+            )
+
+        data_df = data_df.reset_index().drop(columns=["Adj Close"], errors="ignore")
+        # Convert the column names to match processor_alpaca.py as far as possible.
         data_df.columns = [
             "timestamp",
             "open",
@@ -278,7 +348,10 @@ class YahooFinanceProcessor:
         trading_days = self.get_trading_days(start=self.start, end=self.end)
         # produce full timestamp index
         if self.time_interval == "1d":
-            times = trading_days
+            # Use a tz-aware DatetimeIndex so we don't accidentally grow the index
+            # by assigning tz-aware timestamps into a string index (which can lead
+            # to different lengths per ticker and break df_to_array/hstack).
+            times = pd.to_datetime(trading_days).tz_localize(NY)
         elif self.time_interval == "1m":
             times = []
             for day in trading_days:
@@ -302,7 +375,7 @@ class YahooFinanceProcessor:
                 df.tic == tic
             ]  # extract just the rows from downloaded data relating to this tic
             for i in range(tic_df.shape[0]):  # fill empty DataFrame using original data
-                tmp_timestamp = tic_df.iloc[i]["timestamp"]
+                tmp_timestamp = pd.Timestamp(tic_df.iloc[i]["timestamp"])
                 if tmp_timestamp.tzinfo is None:
                     tmp_timestamp = tmp_timestamp.tz_localize(NY)
                 else:

@@ -104,6 +104,15 @@ class DRLAgent:
     def train_model(self, model, cwd, total_timesteps=5000):
         model.cwd = cwd
         model.break_step = total_timesteps
+        # ElegantRL's evaluator expects at least one evaluation record.
+        # For very small smoke-test runs, the default eval_per_step (e.g. 2e4)
+        # can exceed break_step, resulting in an empty recorder and a crash.
+        if getattr(model, "eval_per_step", None) is not None:
+            if model.eval_per_step > model.break_step:
+                model.eval_per_step = max(1, model.break_step // 2)
+        if getattr(model, "eval_times", None) is not None:
+            if model.eval_times < 1:
+                model.eval_times = 1
         train_agent(model)
 
     @staticmethod

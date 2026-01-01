@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from finrl.config import ERL_PARAMS
 from finrl.config import INDICATORS
+from finrl.config import PPO_PARAMS
 from finrl.config import RLlib_PARAMS
 from finrl.config import SAC_PARAMS
 from finrl.config import TRAIN_END_DATE
@@ -40,7 +41,14 @@ def train(
         "turbulence_array": turbulence_array,
         "if_train": True,
     }
+
+
+    env_kwargs = kwargs.get("env_kwargs")
+    if isinstance(env_kwargs, dict) and env_kwargs:
+        env_config["env_kwargs"] = env_kwargs
     env_instance = env(config=env_config)
+
+
 
     # read parameters
     cwd = kwargs.get("cwd", "./" + str(model_name))
@@ -153,8 +161,16 @@ if __name__ == "__main__":
     #     technical_indicator_list=INDICATORS,
     #     drl_lib="stable_baselines3",
     #     env=env,
-    #     model_name="sac",
-    #     cwd="./test_sac",
-    #     agent_params=SAC_PARAMS,
-    #     total_timesteps=1e4,
+    #     model_name="ppo",
+    #     cwd="./test_ppo_sb3",
+    #     agent_params=PPO_PARAMS,
+    #     total_timesteps=5e4,
+    #     # Enable Go-Explore explicitly (opt-in)
+    #     env_kwargs={
+    #         "go_explore_enabled": True,
+    #         # Optional tuning knobs:
+    #         # "go_explore_reset_prob": 0.5,
+    #         # "go_explore_warmup_episodes": 1,
+    #         # "go_explore_return_mode": "checkpoint",  # or "replay"
+    #     },
     # )
