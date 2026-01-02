@@ -154,7 +154,8 @@ class DRLAgent:
 
         if_discrete = env.if_discrete
         device = next(act.parameters()).device
-        state = env.reset()
+        reset_out = env.reset()
+        state = reset_out[0] if isinstance(reset_out, tuple) else reset_out
         episode_returns = []  # the cumulative_return / initial_account
         episode_total_assets = [env.initial_total_asset]
         max_step = env.max_step
@@ -166,7 +167,12 @@ class DRLAgent:
             action = (
                 a_tensor.detach().cpu().numpy()[0]
             )  # not need detach(), because using torch.no_grad() outside
-            state, reward, done, _ = env.step(action)
+            step_out = env.step(action)
+            if isinstance(step_out, tuple) and len(step_out) == 5:
+                state, reward, terminated, truncated, _info = step_out
+                done = bool(terminated) or bool(truncated)
+            else:
+                state, reward, done, _info = step_out
             total_asset = env.amount + (env.price_ary[env.day] * env.stocks).sum()
             episode_total_assets.append(total_asset)
             episode_return = total_asset / env.initial_total_asset

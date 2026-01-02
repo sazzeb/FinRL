@@ -5,7 +5,7 @@ from finrl.config import RLlib_PARAMS
 from finrl.config import TEST_END_DATE
 from finrl.config import TEST_START_DATE
 from finrl.config_tickers import DOW_30_TICKER
-from finrl.meta.env_stock_trading.env_stocktrading import StockTradingEnv
+from finrl.meta.env_stock_trading.env_stocktrading_np import StockTradingEnv
 
 
 def test(
@@ -62,6 +62,7 @@ def test(
             cwd=cwd,
             net_dimension=net_dimension,
             environment=env_instance,
+            env_args=env_config,
         )
         return episode_total_assets
     elif drl_lib == "rllib":
