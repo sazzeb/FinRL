@@ -464,11 +464,11 @@ class StockTradingEnv(gym.Env):
             self.stocks_cool_down[:] = 0
 
         state = self.get_state(price)
-        total_asset = self.amount + (self.stocks * price).sum()
+        total_asset = float(self.amount + (self.stocks * price).sum())
 
         # Reward
         if self.reward_mode == "delta_asset":
-            reward = (total_asset - self.total_asset) * self.reward_scaling
+            reward = (total_asset - float(self.total_asset)) * self.reward_scaling
         else:
             prev_total = float(self.total_asset) if self.total_asset is not None else float(total_asset)
             if prev_total <= 0:
@@ -484,14 +484,15 @@ class StockTradingEnv(gym.Env):
             dd_now = self._compute_drawdown(float(total_asset))
             dd_inc = max(0.0, dd_now - dd_prev)
             reward = self.reward_a * log_ret - self.reward_b_turnover * turnover - self.reward_c_drawdown * dd_inc
-        self.total_asset = total_asset
+        reward = float(reward)
+        self.total_asset = float(total_asset)
 
-        self.gamma_reward = self.gamma_reward * self.gamma + reward
+        self.gamma_reward = float(self.gamma_reward * self.gamma + reward)
         done = self.day == self.max_step
 
         if done:
-            reward = self.gamma_reward
-            self.episode_return = total_asset / self.initial_total_asset
+            reward = float(self.gamma_reward)
+            self.episode_return = float(total_asset) / float(self.initial_total_asset)
 
         # Go-Explore: update archive with promising checkpoints.
         if self.go_explore_enabled:
@@ -540,7 +541,7 @@ class StockTradingEnv(gym.Env):
 
             self._go_last_total_asset = float(total_asset)
 
-        return state, reward, done, False, {
+        return state, float(reward), bool(done), False, {
             "go_explore_started_from_archive": self._go_started_from_archive,
             "go_explore_archive_size": len(self.go_explore_archive),
         }
